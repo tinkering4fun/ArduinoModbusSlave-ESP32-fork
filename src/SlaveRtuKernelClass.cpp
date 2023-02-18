@@ -20,8 +20,10 @@
 // and also a 2nd real Hardware Serial port where the RS485 interface
 // can connected to.
 //
-// There are plenty of debug messages in the code, which can disabled
-// by commenting out the respective #define in SlaveRtuKernelClass.h
+// There are plenty of debug messages in the code.
+// Messages will be active if 'DEBUG_SERIAL' is defined in the sketch. 
+// e.g.  #define DEBUG_SERIAL Serial
+// to use the standard Serial port
 //
 // Werner Panocha, February 2023
 //
@@ -126,9 +128,10 @@ void SlaveRtuKernelClass::enableCallback(int cbVectorIdx){
 
 
 
-
+// ---------------------------------------------------------------------
 // Constructor 
-// Usable only from a derived class
+// ---------------------------------------------------------------------
+// Notice: Protected, to be used only from a derived class
 SlaveRtuKernelClass::SlaveRtuKernelClass(Stream *serialStream, unsigned int baud, int transmissionControlPin, uint8_t slaveId, uint8_t *config, size_t length) {
 
 	DEBUG_PRINT (F("SlaveRtuKernelClass() "));
