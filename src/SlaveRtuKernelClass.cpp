@@ -20,14 +20,16 @@
 // and also a 2nd real Hardware Serial port where the RS485 interface
 // can connected to.
 //
-// There are plenty of debug messages in the code.
-// Messages will be active if 'DEBUG_SERIAL' is defined in the sketch. 
-// e.g.  #define DEBUG_SERIAL Serial
-// to use the standard Serial port
-//
 // Werner Panocha, February 2023
 //
 
+
+// There are plenty of debug messages in the code.
+// Messages will be active if 'DEBUG_SERIAL' is defined. 
+// e.g.  #define DEBUG_SERIAL Serial
+// to use the standard Serial port
+// Comment out the following line to hide messages
+#define DEBUG_SERIAL Serial
 
 #include "SlaveRtuKernelClass.h"
 
