@@ -6,12 +6,10 @@
 
 #include <ModbusSlave.h>
 
-#include "MyTimeout.h"
+// -------------------------------------------------------------------
+// Debug output macros
+// -------------------------------------------------------------------
 
-
- 
-// Uncomment the following line to disable debug messages
-//#define DEBUG_SERIAL Serial
 #ifdef DEBUG_SERIAL
 
  
@@ -25,7 +23,64 @@
   #define DEBUG_PRINTLN(...)
 #endif
  
+ 
+// -------------------------------------------------------------------
+// Timeout macros 
+// -------------------------------------------------------------------
+// Intended for short internal timing of some tasks like
+// LED blinking, relay contact debounce, etc.
+// A 'timer' is simply a 16bit memory variable, and timing intervals
+// are restricted to apprx. 30 seconds as we have a
+// 15 bit counter for milliseconds, + rollover
 
+
+// Memory buffer variable used for timing operations
+// This needs to be signed value!
+#if defined(__AVR__)
+// AVR specific code here
+#define MY_TIMER_MASK 0xFFFF
+typedef int mytimer_t;
+#elif defined(ESP8266)
+// ESP8266 specific code here
+#define MY_TIMER_MASK 0xFFFF
+typedef int16_t mytimer_t;
+#elif defined(ESP32)
+// ESP32 specific code here
+#define MY_TIMER_MASK 0xFFFF
+typedef int16_t mytimer_t;
+#endif
+
+
+// Load timer with timeout value (absolute value from now on)
+#define setTimeout(x, t)   x =  mytimer_t(mytimer_t(millis() & MY_TIMER_MASK) + t)
+
+// (Re-)Load timer with timeout value, relative to last timeout
+// Use it in continous periodic tasks
+#define nextTimeout(x,t)    x = x + t
+
+// Returns true, if timeout is true
+// Notice: works only for the next 30 seconds after timeout, beware
+// of rollover!
+#define checkTimeout(x)   (mytimer_t(mytimer_t(millis() & MY_TIMER_MASK)  - x) >= 0 ? true : false)
+
+// Reset timer to current time.
+// Afterwards checkTimeout() will return true.
+#define resetTimeout(x)   x =  mytimer_t(millis() & MY_TIMER_MASK)
+
+// Get timer value compared to current time
+// Negative values means timeout not reached, 
+// positive values telling the latency time.
+#define getTimeoutLatency(x) mytimer_t((mytimer_t(millis() & MY_TIMER_MASK) - x) & MY_TIMER_MASK)
+
+// Return the max. achievable timeout value
+#define getMaxTimeout() ((size_t)0x7FFF)
+// Test whether timeout value is allowed
+#define isValidTimeout(x)  (x > getMaxTimeout() ? false : true) 
+
+
+// -------------------------------------------------------------------
+// Slave kernel functions
+// -------------------------------------------------------------------
 class SlaveRtuKernelClass {
 
 private:	
@@ -46,7 +101,7 @@ public:
 	
 protected:
 	// You may change this value to enforce re-initialization of EEPROM
-	static const unsigned long eepromMagic = 0x112233ab;
+	static const unsigned long eepromMagic = 0x12345678;
 		
 	bool eepromDefaultsRequired(void);
 	void eepromWriteDefaults(uint8_t *buffer, size_t length);
@@ -88,26 +143,12 @@ private:
 
 	bool _rebootRequest = false;
 	// Configuration registers buffered in EEPROM
-///	static const uint16_t configAddressOffset = 0x0100;
-///	static const size_t numConfigRegs = 2;
 	uint16_t _configRegs[numConfigRegs];
 	
 	
 	// Handle Holding Registers reserved for Kernel Configuration
 	uint8_t _readConfigRegs(uint8_t fc, uint16_t address, uint16_t length);
-	uint8_t _writeConfigRegs(uint8_t fc, uint16_t address, uint16_t length);
-
-	
-/*   
-- CB_READ_COILS = 0,
-- CB_READ_DISCRETE_INPUTS,
-- CB_READ_HOLDING_REGISTERS,
-- CB_READ_INPUT_REGISTERS,
-- CB_WRITE_COILS,
-- CB_WRITE_HOLDING_REGISTERS,
-  CB_READ_EXCEPTION_STATUS,
-  CB_MAX
-*/	
+	uint8_t _writeConfigRegs(uint8_t fc, uint16_t address, uint16_t length);	
 
 	// Instance methods connected to kernel callback
 	uint8_t _readHoldingRegs(uint8_t fc, uint16_t address, uint16_t length);
