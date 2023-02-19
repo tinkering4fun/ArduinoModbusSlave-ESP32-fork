@@ -46,7 +46,7 @@ This works because a Modbus Request Message consists of an 8-bit function code (
 This __FC selects the entity type and desired operation__ on the addressed entity item(s).
 
 Now comes the funny / confusing part ...  
-Modbus was originally invented in 1970 as extension bus for PLCs. And in the PLC world's documentation and software one may find a __5-digit decimal addressing convention__, where the 1st digit implies the entity type.
+Modbus was originally invented in 1979 as extension bus for PLCs. And in the PLC world's documentation and software one may find a __5-digit decimal addressing convention__, where the 1st digit implies the entity type.
 
 | Addr           | Entity Type (operation)        |
 |:---------------|:-------------------------------|  
@@ -58,7 +58,8 @@ Modbus was originally invented in 1970 as extension bus for PLCs. And in the PLC
 Note:  
 The __5-digit addresses are 1-based__, meaning each X0001 - X9999 range translates in the 16-bit address range 0x0000 - 0x270E.
 
-So if you are using some __PLC oriented Modbus Master Software__ using 5-digit addresses it may require to specify e.g. address 40006 (5 + 40001) to make this software aware to use the Modbus FC's applicable for Holding Register access and set entity address 0x0005.  
+Assuming you built a slave with a Holding Register 0x0005, and you are testing with some __PLC oriented Modbus Master Software__ dealing with 5-digit addresses.  
+In this case it may require to specify e.g. address 40006 (5 + 40001) to make the software using the Modbus FC's applicable for Holding Register access and set entity address to 0x0005.  
 
 
 
