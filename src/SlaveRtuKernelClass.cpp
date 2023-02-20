@@ -187,7 +187,17 @@ SlaveRtuKernelClass::SlaveRtuKernelClass(Stream *serialStream, unsigned int baud
 	if(_configRegs[holdingRegCommTimeout]){
 		setTimeout(_communicationLostTimer, _configRegs[holdingRegCommTimeout]);
 	}
- 
+
+	
+#ifdef FAILSAFE_COILS_SUPPORT
+	// 'Failsafe Coils' feature
+	_configRegs[holdingRegFsCoilsMask] 		= _config.fsCoilsMask;
+	_configRegs[holdingRegFsCoilsSafeState] 	= _config.fsCoilsSafeState;
+	_configRegs[holdingRegFsCoilsOnTime] 	= _config.fsCoilsOnTime;
+	_configRegs[holdingRegFsCoilsOffTime]	= _config.fsCoilsOffTime;
+	
+	_initFailsafeCoils();
+#endif 
 	
 	// Initialize RTU kernel instance 
 	// --------------------------------------------------------
@@ -242,7 +252,8 @@ void SlaveRtuKernelClass::poll(void){
 		reset();  					 
 		#endif
 	}
-	
+
+
 	// Handle communication failure alarm, if enabled 
 	if(_configRegs[holdingRegCommTimeout] 
 	   && _communicationLost == false
@@ -253,7 +264,77 @@ void SlaveRtuKernelClass::poll(void){
 	   DEBUG_PRINT (F("Kernel: comunication lost triggered\n"));
 	   cbCommunicationLost(); 
 	}
+	
+#ifdef FAILSAFE_COILS_SUPPORT
+	// Manage failsafe coils
+	// Feature is only active if at least one 'Failsafe Coil' is configured 
+	if(_configRegs[holdingRegFsCoilsMask] != 0){
+		
+		bool flip = false;
+		
+		if(_fsCoilPhase){
+			// On Phase
+			if(checkTimeout(_fsCoilsOnTimer)){
+				// Flip
+				flip = true;
+				setTimeout(_fsCoilsOffTimer, _configRegs[holdingRegFsCoilsOffTime]);
+			} 
+		}
+		else {
+			// Off phase
+			if(checkTimeout(_fsCoilsOffTimer)){
+				// Flip
+				flip = true;
+				setTimeout(_fsCoilsOnTimer, _configRegs[holdingRegFsCoilsOnTime]);
+			} 
+		}
+		
+		if(flip){
+			 // Change phase
+			_fsCoilPhase = !_fsCoilPhase;
+			
+			// Application callback
+			cbDriveFailsafeCoils(_fsCoilPhase, _configRegs[holdingRegFsCoilsMask], _configRegs[holdingRegFsCoilsSafeState]);
+		}
+	}
+	
+#endif
 }
+
+#ifdef FAILSAFE_COILS_SUPPORT
+// ---------------------------------------------------------------------
+// Callback interface to manage 'Failsafe Coils'
+// ---------------------------------------------------------------------
+// The 'Failsafe Coils' feature is just kind of a keep alive signal for
+// selected coils. 
+//
+// Concept is as follows:
+// The physical output pin shall issue pulses while the assigned coil is 
+// logically switched to 'on'.
+// Assumption is that pulses will disappear when the slave
+// looses Modbus communication or encounters a firmware crash.
+//
+// Continous pulses instead of a steady signal may help to bring 
+// critical relays into a well defined safe state if something in 
+// control software environment  went wrong.
+// Requires applicable external harware, e.g. use some AC coupled 
+// pulse detection circuit which cut relay power off.
+//
+// This periodic callback is just a timing information according to
+// configuration registers.
+// The application layer is responsible to check whether a flagged
+// coil is currently sactive and the physical output pin has to be 
+// toggled accordingly. 
+void SlaveRtuKernelClass::cbDriveFailsafeCoils(bool phase, uint16_t	mask, uint16_t	safeState){
+	// Application class shall override and implement applicable action
+}
+
+// Initialize
+void SlaveRtuKernelClass::_initFailsafeCoils(void){
+	_fsCoilPhase = true;
+	setTimeout(_fsCoilsOnTimer, _configRegs[holdingRegFsCoilsOnTime]);
+}
+#endif
 
 
 // ---------------------------------------------------------------------
@@ -278,14 +359,31 @@ void SlaveRtuKernelClass::eepromWriteDefaults(uint8_t *buffer, size_t length){
 	_config.magic = eepromMagic;
 	_config.slaveID = 1;
 	_config.baudRate = 9600;
-	_config.commTimeout = 0;	// Feature disabled
+	_config.commTimeout = 0;		// Feature disabled
 	
-	// Defaults from App, patch in Kernel settings
+	
+#ifdef FAILSAFE_COILS_SUPPORT
+	_config.fsCoilsMask = 0;		// Feature disabled
+	_config.fsCoilsSafeState = 0;
+	_config.fsCoilsOnTime = 50;		// 50ms (10 Hz default)
+	_config.fsCoilsOffTime = 50;
+#endif
+
+	
+	// The defaults in this buffer have been populated by the application.
+	// Now merge with the kernel default parameters  
 	((KernelEeprom *)buffer)->magic 		= _config.magic;
 	((KernelEeprom *)buffer)->slaveID 		= _config.slaveID;
 	((KernelEeprom *)buffer)->baudRate 		= _config.baudRate;
 	((KernelEeprom *)buffer)->commTimeout	= _config.commTimeout;
-	
+
+#ifdef FAILSAFE_COILS_SUPPORT
+	((KernelEeprom *)buffer)->fsCoilsMask		= _config.fsCoilsMask;
+	((KernelEeprom *)buffer)->fsCoilsSafeState	= _config.fsCoilsSafeState;
+	((KernelEeprom *)buffer)->fsCoilsOnTime		= _config.fsCoilsOnTime;
+	((KernelEeprom *)buffer)->fsCoilsOffTime	= _config.fsCoilsOffTime;
+#endif
+
 	_eepromWrite(buffer, length);
 }
 
@@ -387,6 +485,23 @@ uint8_t SlaveRtuKernelClass::_writeConfigRegs(uint8_t fc, uint16_t address, uint
 			val = 0;
 			break;
 			
+#ifdef FAILSAFE_COILS_SUPPORT			
+			case holdingRegFsCoilsMask:
+			_config.fsCoilsMask = val;
+			break;
+			
+			case holdingRegFsCoilsSafeState:
+			_config.fsCoilsSafeState = val;
+			break;
+			
+			case holdingRegFsCoilsOnTime:
+			_config.fsCoilsOnTime = val;
+			break;
+			
+			case holdingRegFsCoilsOffTime:
+			_config.fsCoilsOffTime = val;
+			break;
+#endif
 		}
 		_configRegs[address + i] = val;
 	}

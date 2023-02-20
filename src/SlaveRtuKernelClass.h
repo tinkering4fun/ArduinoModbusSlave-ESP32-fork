@@ -23,7 +23,10 @@
   #define DEBUG_PRINTLN(...)
 #endif
  
- 
+
+// Shall the 'Failsafe Coils' feature compiled in?
+#define FAILSAFE_COILS_SUPPORT
+
 // -------------------------------------------------------------------
 // Timeout macros 
 // -------------------------------------------------------------------
@@ -90,6 +93,15 @@ private:
 		holdingRegBaudRate,
 		holdingRegCommTimeout,
 		holdingRegRebootRequest,	// special function, not persistent!
+		
+#ifdef FAILSAFE_COILS_SUPPORT	
+		// Configuration for the 'Failsafe Coils' feature
+		holdingRegFsCoilsMask,
+		holdingRegFsCoilsSafeState,
+		holdingRegFsCoilsOnTime,
+		holdingRegFsCoilsOffTime,
+#endif	
+		
 		numConfigRegs,
 		
 		configAddressOffset = 0x100
@@ -101,7 +113,7 @@ public:
 	
 protected:
 	// You may change this value to enforce re-initialization of EEPROM
-	static const unsigned long eepromMagic = 0x12345678;
+	static const unsigned long eepromMagic = 0x12345679;
 		
 	bool eepromDefaultsRequired(void);
 	void eepromWriteDefaults(uint8_t *buffer, size_t length);
@@ -111,6 +123,15 @@ protected:
 		uint16_t 		slaveID;
 		uint16_t		baudRate;
 		uint16_t		commTimeout;
+		
+#ifdef FAILSAFE_COILS_SUPPORT	
+		uint16_t		fsCoilsMask;
+		uint16_t		fsCoilsSafeState;
+		uint16_t		fsCoilsOnTime;
+		uint16_t		fsCoilsOffTime;
+#endif		
+		
+		
 		unsigned long 	magic;
 	};
 	
@@ -138,6 +159,21 @@ protected:
 	void _eepromWrite(uint8_t *buffer, size_t length);
 	
 	void dumpBytes(char *text, void *ptr, size_t bytes);
+	
+	
+#ifdef FAILSAFE_COILS_SUPPORT	
+protected:
+	virtual void cbDriveFailsafeCoils(bool phase, uint16_t	mask, uint16_t	safeState);
+	
+private:
+	void _initFailsafeCoils(void);
+	
+	bool _fsCoilPhase = false;
+	mytimer_t _fsCoilsOnTimer;
+	mytimer_t _fsCoilsOffTimer;
+	
+#endif
+
 
 private:	
 
