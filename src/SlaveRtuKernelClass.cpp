@@ -11,6 +11,16 @@
 // 0x102: Communication Watchdog Timeout [ms]
 // 0x103: Reboot request
 //
+// Additional Holding Registers if 'Failsafe Coils' are compiled in
+// whith #define FAILSAFE_COILS_SUPPORT
+// This feature will issue a pulse train while a coil is active, instead
+// of a steady signal.
+// 0x104: Coils enable mask
+// 0x105: Coils power on state
+// 0x106: Pulse On Time [ms]
+// 0x107: Pulse Off Time [ms]
+// 
+//
 // See examples on how to use it.
 //
 // Notice:
@@ -192,7 +202,7 @@ SlaveRtuKernelClass::SlaveRtuKernelClass(Stream *serialStream, unsigned int baud
 #ifdef FAILSAFE_COILS_SUPPORT
 	// 'Failsafe Coils' feature
 	_configRegs[holdingRegFsCoilsMask] 		= _config.fsCoilsMask;
-	_configRegs[holdingRegFsCoilsSafeState] 	= _config.fsCoilsSafeState;
+	_configRegs[holdingRegFsCoilsPowerOnState] 	= _config.fsCoilsPowerOnState;
 	_configRegs[holdingRegFsCoilsOnTime] 	= _config.fsCoilsOnTime;
 	_configRegs[holdingRegFsCoilsOffTime]	= _config.fsCoilsOffTime;
 	
@@ -290,11 +300,11 @@ void SlaveRtuKernelClass::poll(void){
 		}
 		
 		if(flip){
-			 // Change phase
-			_fsCoilPhase = !_fsCoilPhase;
+			 // Change phase, but keep it off when communication is lost
+			_fsCoilPhase = !_fsCoilPhase & !_communicationLost;
 			
 			// Application callback
-			cbDriveFailsafeCoils(_fsCoilPhase, _configRegs[holdingRegFsCoilsMask], _configRegs[holdingRegFsCoilsSafeState]);
+			cbDriveFailsafeCoils(_fsCoilPhase, _configRegs[holdingRegFsCoilsMask], _configRegs[holdingRegFsCoilsPowerOnState]);
 		}
 	}
 	
@@ -364,7 +374,7 @@ void SlaveRtuKernelClass::eepromWriteDefaults(uint8_t *buffer, size_t length){
 	
 #ifdef FAILSAFE_COILS_SUPPORT
 	_config.fsCoilsMask = 0;		// Feature disabled
-	_config.fsCoilsSafeState = 0;
+	_config.fsCoilsPowerOnState = 0;
 	_config.fsCoilsOnTime = 50;		// 50ms (10 Hz default)
 	_config.fsCoilsOffTime = 50;
 #endif
@@ -379,7 +389,7 @@ void SlaveRtuKernelClass::eepromWriteDefaults(uint8_t *buffer, size_t length){
 
 #ifdef FAILSAFE_COILS_SUPPORT
 	((KernelEeprom *)buffer)->fsCoilsMask		= _config.fsCoilsMask;
-	((KernelEeprom *)buffer)->fsCoilsSafeState	= _config.fsCoilsSafeState;
+	((KernelEeprom *)buffer)->fsCoilsPowerOnState	= _config.fsCoilsPowerOnState;
 	((KernelEeprom *)buffer)->fsCoilsOnTime		= _config.fsCoilsOnTime;
 	((KernelEeprom *)buffer)->fsCoilsOffTime	= _config.fsCoilsOffTime;
 #endif
@@ -490,8 +500,8 @@ uint8_t SlaveRtuKernelClass::_writeConfigRegs(uint8_t fc, uint16_t address, uint
 			_config.fsCoilsMask = val;
 			break;
 			
-			case holdingRegFsCoilsSafeState:
-			_config.fsCoilsSafeState = val;
+			case holdingRegFsCoilsPowerOnState:
+			_config.fsCoilsPowerOnState = val;
 			break;
 			
 			case holdingRegFsCoilsOnTime:

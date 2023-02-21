@@ -86,7 +86,7 @@ typedef int16_t mytimer_t;
 // -------------------------------------------------------------------
 class SlaveRtuKernelClass {
 
-private:	
+public: 	
 	// Modbus Holding Registers for configuration
 	enum {
 		holdingRegSlaveId = 0,
@@ -97,7 +97,7 @@ private:
 #ifdef FAILSAFE_COILS_SUPPORT	
 		// Configuration for the 'Failsafe Coils' feature
 		holdingRegFsCoilsMask,
-		holdingRegFsCoilsSafeState,
+		holdingRegFsCoilsPowerOnState,
 		holdingRegFsCoilsOnTime,
 		holdingRegFsCoilsOffTime,
 #endif	
@@ -107,7 +107,7 @@ private:
 		configAddressOffset = 0x100
 	};
 	
-public:
+
 
 	void poll(void);
 	
@@ -126,7 +126,7 @@ protected:
 		
 #ifdef FAILSAFE_COILS_SUPPORT	
 		uint16_t		fsCoilsMask;
-		uint16_t		fsCoilsSafeState;
+		uint16_t		fsCoilsPowerOnState;
 		uint16_t		fsCoilsOnTime;
 		uint16_t		fsCoilsOffTime;
 #endif		
