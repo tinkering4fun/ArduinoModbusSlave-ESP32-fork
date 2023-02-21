@@ -8,8 +8,9 @@ The basic idea was to bundle some core features I like to see in all of my custo
 * Configuration of Modbus Interface parameters via Holding Registers
 	* Slave ID
 	* Baudrate
-* Communication Failure Watchdog (optional)
+* Communication Failure Watchdog
 * Restart command
+* 'Failsafe Coils' feature (compile option)
 
 **Holding Registers** managed by this class:
 
@@ -19,6 +20,13 @@ The basic idea was to bundle some core features I like to see in all of my custo
 | 0x0101    | __Baud Rate__                  |  
 | 0x0102    | __Comm. Watchdog Timeout__ [ms]|  
 | 0x0103    | __Restart request__            |  
+|           | With 'Failsafe Coils'  compled in :  |
+| 0x0104    | __Coils Mask__                 |  
+| 0x0105    | __Power On State__             |  
+| 0x0106    | __Pulse On-Time__ [ms]         |  
+| 0x0107    | __Pulse Off-Time__ [ms]        |  
+
+
 
 ## A word on Modbus Entity types and Addresses (RTU Mode)
 
@@ -100,7 +108,31 @@ The application slave class needs to overwrite these virtual methods to get info
 
 ## Restart Command  
 
-If the value 0xFFFF was written to Holding Register #0x0103, a software restart executed with the next ```poll()```  
+If the value 0xFFFF was written to Holding Register #0x0103, a software restart is executed with the next ```poll()```  
+
+
+## 'Failsafe Coils' Feature
+What it is about, because I didn't find a better name ...  
+In one of my recent projects it was required to bring relays in a safe state, if something went wrong 
+(e.g. broken bus wire or software crash in Modbus Slave or controlling Modbus Master MCU).  
+If things go worse, a relay driver pin may get stuck in active level when it should not, causing danger for controlled equipment.
+
+The solution was to generate a pulse train while the relay shall be active (instead of a steady High or Low to drive the relay).  
+A simple pulse detection circuit can detect the inactive state, regardless of the level where the pin is stuck.  
+The pulse train will stop on communication failure (if enabled), and hopefully also in the event of firmware crash.
+I assume this approach is fail-safe, at least to some extend ...  
+
+Notice: The feature covers only the first 16 coils in a slave.  
+Coils Mask register selects the coils whth pulsed ouput signal.  
+Power-On State register define the power-on state of coils (Notice: this works for any of the coils, not only the masked ones.)  
+Pulse-On/Off registers configures the pulse train pattern in ms (common for all coils).
+
+_To Do --> _  
+_schematic of simple pulse detector circuit_  
+_implement reasonable timing limits_  
+
+
+
 
 
 
