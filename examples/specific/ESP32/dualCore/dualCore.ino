@@ -16,7 +16,9 @@
 	==> "How to use ESP32 Dual Core with Arduino IDE"
 	see https://randomnerdtutorials.com/esp32-dual-core-arduino-ide/
  
- 
+	May also help as a template for new projects.
+	
+	
     Werner Panocha, February 2023
 
  
@@ -25,6 +27,9 @@
 */
 
 #include <ModbusSlave.h>
+
+SemaphoreHandle_t registerSemaphore;
+bool semaphoreTakeFailure = false;
 
 TaskHandle_t ModbusTask;
 TaskHandle_t SensorTask;
@@ -55,9 +60,35 @@ uint8_t readInputRegs(uint8_t fc, uint16_t address, uint16_t length, void *conte
 	if ((address + length) > num_input_regs)
 		return STATUS_ILLEGAL_DATA_ADDRESS;
     
-	for (int i = 0; i < length; i++){
-		slave->writeRegisterToBuffer(i, input_regs[address + i]);
+    // Be safe  
+    if(semaphoreTakeFailure) {
+		// Should never occur, because it's a programmer's error
+		Serial.printf("Core %d: >>> Encountered semaphoreTakeFailure flag\n", xPortGetCoreID());
+		return STATUS_SLAVE_DEVICE_FAILURE;
 	}
+    // Need to aquire semaphore to ensure a consistent readout without
+    // interference by updates from sensor task!
+    // We expect to wait only for a short time (5 ms)
+    if(xSemaphoreTake(registerSemaphore, 5 * portTICK_PERIOD_MS)){
+		// Holding semaphore
+		// >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+			
+		// Move data from register buffer to Modbus send buffer
+		for (int i = 0; i < length; i++){
+			slave->writeRegisterToBuffer(i, input_regs[address + i]);
+		}
+	
+		// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+		// Release semaphore
+		xSemaphoreGive(registerSemaphore);
+	}
+	else {
+		// We could not acquire the semaphore, which is an unexpected error
+		Serial.printf("Core %d: >>> Failed to aquire semaphore\n", xPortGetCoreID());
+		return STATUS_SLAVE_DEVICE_FAILURE;
+	}
+	
+	
 	return STATUS_OK;
 }
 
@@ -82,6 +113,10 @@ void setup()
 	RS485_SERIAL.begin(RS485_BAUDRATE);
 	slave->begin(RS485_BAUDRATE);
 
+	// Create annd release semaphore for register access
+	registerSemaphore = xSemaphoreCreateBinary();
+	xSemaphoreGive(registerSemaphore);
+	
     // Create a separate task for the Sensor's stuff
 	xTaskCreatePinnedToCore(
 		SensorFunction, // Function to implement the task
@@ -118,22 +153,51 @@ void SensorFunction( void * parameter)
 	// Assume the parameter is a pointer to our input register array
 	uint16_t *inputs = (uint16_t *)parameter;
 	
-	// Lets have a toggling flag as the sensor's value
-	static bool flag = false;
-	
 	// Endless loop ...
 	while(true){
    
-		Serial.printf("Core %d: Sensor flag: %d\n", xPortGetCoreID(), flag);
+		// Sensor data aquisition code should go here e.g. I2C comm.
+		// -------------------------------------------------------------
 		
-		// The sensor aquisition task is now 'busy' for a long time, 
-		// but the Modbus Slave is still responsive
+		// Lets have a toggling flag as the sensor's value
+		static bool flag = false;
+		
+		Serial.printf("Core %d: Reading from sensor ...\n", xPortGetCoreID(), flag);
+		// This silly simulated sensor data aquisition task is 
+		// now 'busy' for a long time ...
+		// But the Modbus Slave is still responsive
 		delay(10000);	
 		
-		flag = !flag;	// New sensor data
 		
-		// Make data available to Modbus Slave task
-		inputs[0] = flag;
+		flag = !flag;	// Our new sensor data
+		Serial.printf("Core %d: Sensor flag now: %d\n", xPortGetCoreID(), flag);
+		
+			
+		// Make new sensor data available to Modbus Slave task
+		//		
+		// Need to aquire semaphore to ensure a consistent readout  
+	    // of registers from Modbus task!
+	    // We expect to wait only for a short time (5 ms)
+	    if(xSemaphoreTake(registerSemaphore, 5 * portTICK_PERIOD_MS)){
+			
+			// Holding semaphore
+			// >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+			
+			// This piece of code should run as short as possible !
+			// Just move consistent sensor results between memory buffers.
+				
+			inputs[0] = flag;
+			
+			// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+			// Release semaphore when done
+			xSemaphoreGive(registerSemaphore);
+		}
+		else {
+			// We could not acquire the semaphore, which is an unexpected error
+			// Set global flag, so Modbus tasks gets aware of this
+			semaphoreTakeFailure = true;
+			Serial.printf("Core %d: >>> Failed to aquire semaphore\n", xPortGetCoreID());
+		}
 	}
   
 }
