@@ -113,7 +113,7 @@ void setup()
 	RS485_SERIAL.begin(RS485_BAUDRATE);
 	slave->begin(RS485_BAUDRATE);
 
-	// Create annd release semaphore for register access
+	// Create and release semaphore for register access
 	registerSemaphore = xSemaphoreCreateBinary();
 	xSemaphoreGive(registerSemaphore);
 	
