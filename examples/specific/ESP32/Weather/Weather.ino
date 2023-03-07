@@ -5,10 +5,13 @@
 	Runs on ESP32 using both cores.
 	
 	Core 1 runs the Modbus task, and 
-	Core 0 acts as sensor driver.
+	Core 0 runs the tasks for DHT22 and BME280 sensors
 
-	See WeatherClass.cc.h for more details
 	
+	This example is a proof of concept on building 
+	practical Modbus slaves with the SlaveRtuKernelClass.
+	
+	See WeatherClass.cc.h for more details about functions and registers.
 	
     Werner Panocha, March 2023
 */
@@ -29,8 +32,12 @@
 
 // Required for DHT22
 #include <DHT22.h>			// https://github.com/dvarrel/DHT22
-#include <arduino-timer.h> 	// https://github.com/contrem/arduino-timer
-#define DHT22_SDA_PIN SDA	// SDA pin for DHT22 sensor
+							// using ==> https://github.com/tinkering4fun/DHT22-ESP32-fork
+#define DHT22_SDA_PIN 19	// SDA pin for DHT22 sensor
+
+// Required for BME280
+#include "BlueDot_BME280.h"	// https://github.com/BlueDot-Arduino/BlueDot_BME280
+#define BME280_I2C_ADDR 0x77	// Default 0x77 / alternate 0x76
 
 
 // Dirty trick to use a C++ class in Arduino IDE w/o making a library ...
@@ -40,13 +47,14 @@
 
 // The Modbus slave hided in a class
 WeatherClass *slaveInstance;
-
-
-TaskHandle_t ModbusTask;
-TaskHandle_t SensorDHT22Task;
-
-
 #define SLAVE_ID 1
+
+
+// Taskhandles
+TaskHandle_t SensorDHT22Task;
+TaskHandle_t SensorBME280Task;
+
+
 
 // RS485 Modbus Interface 
 #define RS485_BAUDRATE 	9600 						// Baudrate for Modbus communication.
@@ -73,7 +81,8 @@ void setup()
 	
 	
 	slaveInstance = new WeatherClass(&(RS485_SERIAL), RS485_BAUDRATE, RS485_CTRL_PIN, SLAVE_ID);
-	
+
+ 	
     // Create a separate task for the DHT22 sensor driver
     //
     // Notice:
@@ -84,8 +93,20 @@ void setup()
 		"DHT22", 		// Name of the task
 		8192,  			// Stack size in words 
 		slaveInstance, 	// Task parameter       <== pointer to Modbus slave!
-		1,  			// Priority of the task <== DHT22 need high priority!
+		2,  			// Priority of the task <== DHT22 need high priority!
 		&SensorDHT22Task,	// Task handle.
+		0); 			// Core where the task should run
+ 
+
+    // Create a separate task for the BME280 sensor driver
+    //
+	xTaskCreatePinnedToCore(
+		SensorBME280, 	// Function to implement the task
+		"BME280", 		// Name of the task
+		8192,  			// Stack size in words 
+		slaveInstance, 	// Task parameter       <== pointer to Modbus slave!
+		1,  			// Priority of the task  
+		&SensorBME280Task,	// Task handle.
 		0); 			// Core where the task should run
 
 
@@ -107,30 +128,28 @@ void loop()
 
 
 
-
-// The following function is started in Core 0, so
-// it does not interfere with the Modbus Server task
+// ---------------------------------------------------------------------
+// The following sensor functions are started in Core 0, so they do not
+// interfere with the Modbus Server task.
 //
-// Rem:
-// The following code is taken from DHT22 example Interval.ino
-//
-// It is a benefit of the ESP32 treaded approach that it is easy to
-// take over code from library examples etc.
-// Even from 'unfriendly' libraries which use 'delay()' for timings.
-
+// Notice:
+// The tasks need to be nice to each other and shall not block longer
+// than necessary.
+// Therefore we use vTaskDelay() to suspend the tasks when applicable.
+// Updates to the Modbus Register Buffer are performed by callbacks 
+// to WeatherClass, which takes care about Semaphore locking.
+// ---------------------------------------------------------------------
 
 // DHT22 support class (make it global accesible)
 DHT22 dht22(DHT22_SDA_PIN); 
-bool dht22UpdateRequested;
 	
 // ---------------------------------------------------------------------
 void SensorDHT22( void * parameter) 
 // ---------------------------------------------------------------------
 {
-	// >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 	// This section is similar to Arduino setup() function
 	
-	Serial.printf("Core %d: Sensor task\n", xPortGetCoreID());
+	Serial.printf("Core %d: DHT22 Sensor task\n", xPortGetCoreID());
 	
 	// Parameter is a pointer to the Modbus slave class
 	class WeatherClass *slave = (class WeatherClass *)parameter;
@@ -140,84 +159,115 @@ void SensorDHT22( void * parameter)
 	// A private copy of the input registers for the sensor task
 	uint16_t inputRegs[WeatherClass::numInputRegs];
 	
-	// Create a timer with default settings
-	auto timer = timer_create_default(); 
-	
-	
 	// Startup  DHT22 ... until begin() returns OK
 	while(dht22.begin() < 0)
-		yield();
+		vTaskDelay( 100 / portTICK_PERIOD_MS);
 
-	
 	// DHT22 conversion is already running after begin()
-	dht22UpdateRequested = true;
-	
-	// Interval timer (load from holding register value)
-	timer.every(holdingRegs[WeatherClass::holdingRegDHT22Interval] * 1000, newDHT22Conversion);
 	
 	Serial.println("DTH22 sensor initialized");
-	// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 	
 	// Endless loop ...
 	while(true){
-		// >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 		// This section is similar to Arduino loop() function
-		
+		int rc;
 		float t, h;
 		
-		// Run timer, will periodically request an update of DHT22 data
-		timer.tick();	
+		// Suspend task while the DHT22 conversion is running ...
+		vTaskDelay( DHT22::cSamplingTime / portTICK_PERIOD_MS);
+
+		// Read the sensor values
+		if((rc = dht22.readSensor()) == DHT22::OK){
 		
-		// If a request was made, wait for end of conversion
-		if(dht22UpdateRequested && !dht22.conversionInProgress()){
-			dht22UpdateRequested = false;
+			h = dht22.getHumidity();
+			t = dht22.getTemperature();		
 			
-			// Read the sensor values
-			int rc;
-			if((rc = dht22.readSensor()) == DHT22::OK){
+			// Populate Modbus register buffer with data
+			inputRegs[WeatherClass::inputRegDHT22Temp] 	= t * 10;
+			inputRegs[WeatherClass::inputRegDHT22Hygro]	= h * 10;
 			
+			// Call slave to update
+			slave->sensorDHT22UpdateCallback(inputRegs);
 			
-				h = dht22.getHumidity();
-				t = dht22.getTemperature();
-				
-	
-				// Print data
-				Serial.print("h=");Serial.print(h,1);Serial.print("\t");
-				Serial.print("t=");Serial.println(t,1);
-				
-				// Populate Modbus register buffer with data
-				inputRegs[WeatherClass::inputRegDHT22Temp] 	= t * 10;
-				inputRegs[WeatherClass::inputRegDHT22Hygro]	= h * 10;
-				
-				// Call slave to update
-				slave->sensorUpdateCallback(inputRegs);
-				Serial.printf("Core %d: Sensor update delivered\n", xPortGetCoreID());
-			}
-			else {
-				Serial.printf("Core %d: ERROR: cannot read DHT22, RC: %d\n", xPortGetCoreID(), rc);
-			}
-		}	
-		// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+			Serial.printf("Core %d: DHT22   t: %5.2f  h: %5.2f\n" , xPortGetCoreID(), t, h);
+		}
+		else {
+			Serial.printf("Core %d: ERROR: cannot read DHT22, RC: %d\n", xPortGetCoreID(), rc);
+		}
+
+		// Suspend task until start of next conversion
+		vTaskDelay( ((holdingRegs[WeatherClass::holdingRegDHT22Interval] *1000) - DHT22::cSamplingTime) / portTICK_PERIOD_MS);
+
+		// Perform readSensor() only to start a new conversion, 
+		// ignoring any data read at this time
+		if((rc = dht22.readSensor()) != DHT22::OK){
+			Serial.printf("Core %d: ERROR: cannot request DHT22 SOC, RC: %d\n", xPortGetCoreID(), rc);
+		}
 	}
 }
 
-// Periodic callback from DHT22 timer object
+
+// Global access
+BlueDot_BME280 bme280 = BlueDot_BME280();
+
 // ---------------------------------------------------------------------
-bool newDHT22Conversion(void *) {
-   
-   Serial.printf("Core %d: newDHT22Conversion()\n", xPortGetCoreID());
-   
-	if(dht22.conversionInProgress()){
-		// This should not happen, interval too short?!
-		Serial.println("ERROR conversion already in progress, interval too short?");
-		return false; // stop timer repetitions!
+void SensorBME280( void * parameter) 
+// ---------------------------------------------------------------------
+{
+	Serial.printf("Core %d: BME280 Sensor task\n", xPortGetCoreID());
+	
+	// Parameter is a pointer to the Modbus slave class
+	class WeatherClass *slave = (class WeatherClass *)parameter;
+	uint16_t *holdingRegs = slave->getHoldingRegs();
+	
+	
+	// A private copy of the input registers for the sensor task
+	uint16_t inputRegs[WeatherClass::numInputRegs];
+	
+	
+	bme280.parameter.communication = 0;   			// I2C
+	bme280.parameter.I2CAddress = BME280_I2C_ADDR;	// address
+	bme280.parameter.sensorMode = 0b11;             //Choose sensor mode
+	bme280.parameter.IIRfilter = 0b100;             //Setup for IIR Filter
+	bme280.parameter.humidOversampling = 0b101;     //Setup Humidity Oversampling
+	bme280.parameter.tempOversampling = 0b101;      //Setup Temperature Ovesampling
+	bme280.parameter.pressOversampling = 0b101;     //Setup Pressure Oversampling 
+	bme280.parameter.pressureSeaLevel = 1013.25;    //default value of 1013.25 hPa
+	bme280.parameter.tempOutsideCelsius = 15;       //default value of 15°C
+	
+	// Check Chip ID
+	if (bme280.init() != 0x60){  
+		 
+		Serial.printf("Core %d: BME280 ERROR: Sensor not found, task halted\n", xPortGetCoreID());
+		while(true)
+			vTaskDelay( 100 / portTICK_PERIOD_MS);
 	}
-
-	// Request a conversion (discarding the retrieved data for now)
-	dht22.readSensor();
-	// Set a flag, to make loop() aware of the new conversion
-	dht22UpdateRequested = true;
-	return true; // repeat? true
+	
+	Serial.printf("Core %d: BME280  Sensor ready\n", xPortGetCoreID());
+	// Endless loop ...
+	while(true){
+		
+		float t, h, p;
+		
+		t = bme280.readTempC();			// Celsius
+		vTaskDelay( 100 / portTICK_PERIOD_MS);
+		h = bme280.readHumidity();		// %
+		vTaskDelay( 100 / portTICK_PERIOD_MS);
+		p = bme280.readPressure();		// hPa
+		
+		// Populate Modbus register buffer with data
+		inputRegs[WeatherClass::inputRegBME280Temp] 	= t * 100;
+		inputRegs[WeatherClass::inputRegBME280Hygro]	= h * 100;
+		inputRegs[WeatherClass::inputRegBME280Press]	= p * 10;
+			
+		// Call slave to update
+		slave->sensorBME280UpdateCallback(inputRegs);
+			
+		Serial.printf("Core %d: BME280  t: %5.2f  h: %5.2f  p: %5.2f\n" , xPortGetCoreID(), t, h, p);
+		
+		// Suspend task until start of next conversion
+		vTaskDelay( 5000 - 200/ portTICK_PERIOD_MS);
+		vTaskDelay( ((holdingRegs[WeatherClass::holdingRegBME280Interval] *1000) - 200) / portTICK_PERIOD_MS);
+	}
 }
-
 // eof

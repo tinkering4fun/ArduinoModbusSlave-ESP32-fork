@@ -7,19 +7,22 @@
 //
 // Works only on ESP32, as we use both cores and multitasking.
 // The Sensor interface runs in a parallel thread / core, and
-// reports new data with method call sensorUpdateCallback().
+// reports new data with method call sensorUpdateXXXXCallback().
 //
 // This class maintains 
 //
 // Input registers
 // ----------------------------------------------
-//     0: DHT22 Temperature (last digit == 0.1′C)
-//     1: DHT22 Humidity (last digit == 0.1%)
+//     0: DHT22  Temperature (last digit == 0.1 ′C)
+//     1: DHT22  Humidity    (last digit == 0.1 %)
+//     2: BME280 Temperature (last digit == 0.01 ′C)
+//     3: BME280 Humidity    (last digit == 0.01 %)
+//     4: BME280 Pressure    (last digit == 0.01 hPa)
 //
 // Holding registers
 // ----------------------------------------------
-//     0: Sampling interval DHT22 sensor
-//
+//     0: Sampling interval DHT22 sensor (sec)
+//     1: Sampling interval DHT22 sensor (sec)
 //
 // It also inherits the features of the SlaveRtuKernelClass 
 //
@@ -59,6 +62,7 @@ WeatherClass::WeatherClass(Stream *serialStream, unsigned int baud, int transmis
 		
 		// Populate config structure with factory default values
 		_config.holdingValues[holdingRegDHT22Interval] = 10;
+		_config.holdingValues[holdingRegBME280Interval] = 10;
 		
 		eepromWriteDefaults((uint8_t *)&_config, sizeof(ApplicationConfig));
 	}
@@ -73,8 +77,6 @@ WeatherClass::WeatherClass(Stream *serialStream, unsigned int baud, int transmis
 	_registerSemaphore = xSemaphoreCreateBinary();
 	xSemaphoreGive(_registerSemaphore);	
 	_semaphoreTakeFailure = false;
-	
-	
 	
 	// Enable the callbacks for the desired RTU messages to act on
 	enableCallback(CB_READ_HOLDING_REGISTERS);
@@ -131,9 +133,9 @@ uint8_t WeatherClass::cbAccessInputRegisters(bool write, uint16_t address, uint1
 
 
 // Receive updates for input registers from sensor task
-void WeatherClass::sensorUpdateCallback(uint16_t *regArray){
+void WeatherClass::sensorDHT22UpdateCallback(uint16_t *regArray){
 	
-	Serial.printf("Core %d: Sensor update received\n", xPortGetCoreID());
+	Serial.printf("Core %d: DHT22 Sensor update received\n", xPortGetCoreID());
 	
     // Need to aquire semaphore to ensure a consistent update 
     // We expect to wait only for a short time (5 ms)
@@ -142,7 +144,8 @@ void WeatherClass::sensorUpdateCallback(uint16_t *regArray){
 		// >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 		
 		// Move data ...
-		memcpy(_inputRegs, regArray, sizeof(_inputRegs));
+		_inputRegs[inputRegDHT22Temp]  = regArray[inputRegDHT22Temp];
+		_inputRegs[inputRegDHT22Hygro] = regArray[inputRegDHT22Hygro];
 		
 		// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 		// Release semaphore
@@ -150,7 +153,34 @@ void WeatherClass::sensorUpdateCallback(uint16_t *regArray){
 	}
 	else {
 		// We could not acquire the semaphore, which is an unexpected error
-		Serial.printf("Core %d: >>> Failed to aquire semaphore for update\n", xPortGetCoreID());
+		Serial.printf("Core %d: >>> Failed to aquire semaphore for DHT22 update\n", xPortGetCoreID());
+		_semaphoreTakeFailure = false;
+	}	
+};
+
+// Receive updates for input registers from sensor task
+void WeatherClass::sensorBME280UpdateCallback(uint16_t *regArray){
+	
+	Serial.printf("Core %d: BME280 Sensor update received\n", xPortGetCoreID());
+	
+    // Need to aquire semaphore to ensure a consistent update 
+    // We expect to wait only for a short time (5 ms)
+    if(xSemaphoreTake(_registerSemaphore, 5 * portTICK_PERIOD_MS)){
+		// Holding semaphore
+		// >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+		
+		// Move data ...
+		_inputRegs[inputRegBME280Temp]  = regArray[inputRegBME280Temp];
+		_inputRegs[inputRegBME280Hygro] = regArray[inputRegBME280Hygro];
+		_inputRegs[inputRegBME280Press] = regArray[inputRegBME280Press];
+		
+		// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+		// Release semaphore
+		xSemaphoreGive(_registerSemaphore);
+	}
+	else {
+		// We could not acquire the semaphore, which is an unexpected error
+		Serial.printf("Core %d: >>> Failed to aquire semaphore for BME280 update\n", xPortGetCoreID());
 		_semaphoreTakeFailure = false;
 	}	
 };

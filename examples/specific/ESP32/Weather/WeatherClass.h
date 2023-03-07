@@ -18,6 +18,11 @@ public:
 		inputRegDHT22Temp = 0,
 		inputRegDHT22Hygro,
 		
+		// BME280
+		inputRegBME280Temp,
+		inputRegBME280Hygro,
+		inputRegBME280Press,
+		
 		numInputRegs,
 	};
 	
@@ -27,7 +32,8 @@ public:
 	enum {
 		// DHT22
 		holdingRegDHT22Interval = 0,
-	
+		holdingRegBME280Interval,
+		
 		numHoldingRegs,
 	};
 	
@@ -41,7 +47,8 @@ public:
 public:
 
 	WeatherClass(Stream *serialStream, unsigned int baud, int transmissionControlPin, uint8_t slaveId);
-	void sensorUpdateCallback(uint16_t *regArray);
+	void sensorDHT22UpdateCallback(uint16_t *regArray);
+	void sensorBME280UpdateCallback(uint16_t *regArray);
 	uint16_t *getHoldingRegs();
 
 	
