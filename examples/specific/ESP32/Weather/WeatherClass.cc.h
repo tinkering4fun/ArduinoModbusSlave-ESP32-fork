@@ -13,11 +13,12 @@
 //
 // Input registers
 // ----------------------------------------------
-//     0: DHT22  Temperature (last digit == 0.1 ′C)
-//     1: DHT22  Humidity    (last digit == 0.1 %)
-//     2: BME280 Temperature (last digit == 0.01 ′C)
-//     3: BME280 Humidity    (last digit == 0.01 %)
-//     4: BME280 Pressure    (last digit == 0.01 hPa)
+//     0: Status Register
+//     1: DHT22  Temperature (last digit == 0.1 ′C)
+//     2: DHT22  Humidity    (last digit == 0.1 %)
+//     3: BME280 Temperature (last digit == 0.01 ′C)
+//     4: BME280 Humidity    (last digit == 0.01 %)
+//     5: BME280 Pressure    (last digit == 0.01 hPa)
 //
 // Holding registers
 // ----------------------------------------------
@@ -76,12 +77,15 @@ WeatherClass::WeatherClass(Stream *serialStream, unsigned int baud, int transmis
 	// Create and release semaphore for register access
 	_registerSemaphore = xSemaphoreCreateBinary();
 	xSemaphoreGive(_registerSemaphore);	
-	_semaphoreTakeFailure = false;
-	
+
 	// Enable the callbacks for the desired RTU messages to act on
 	enableCallback(CB_READ_HOLDING_REGISTERS);
 	enableCallback(CB_WRITE_HOLDING_REGISTERS);
 	enableCallback(CB_READ_INPUT_REGISTERS);
+	
+	// Clear all input regs on startup  
+	for(int i =0; i < numInputRegs; i++)
+		_inputRegs[i] = 0;
 	
 	DEBUG_PRINT (F("WeatherClass(): initialized\n"));
 }
@@ -97,14 +101,6 @@ uint8_t WeatherClass::cbAccessInputRegisters(bool write, uint16_t address, uint1
 	
 	if ((address + length) > numInputRegs)
 		return STATUS_ILLEGAL_DATA_ADDRESS;
-
-    // Be safe  
-    if(_semaphoreTakeFailure) {
-		// Should never occur, because it's a programmer's error
-		// This fatal error can only be cleared by a reboot!
-		Serial.printf("Core %d: >>> Encountered semaphoreTakeFailure flag\n", xPortGetCoreID());
-		return STATUS_SLAVE_DEVICE_FAILURE;
-	}
 
     // Need to aquire semaphore to ensure a consistent readout without
     // interference by updates from sensor task!
@@ -133,6 +129,10 @@ uint8_t WeatherClass::cbAccessInputRegisters(bool write, uint16_t address, uint1
 
 
 // Receive updates for input registers from sensor task
+void WeatherClass::sensorDHT22ErrorCallback(){
+	_inputRegs[inputRegStatus] |= statusErrDHT22;	// Sensor Error
+}
+
 void WeatherClass::sensorDHT22UpdateCallback(uint16_t *regArray){
 	
 	Serial.printf("Core %d: DHT22 Sensor update received\n", xPortGetCoreID());
@@ -154,11 +154,15 @@ void WeatherClass::sensorDHT22UpdateCallback(uint16_t *regArray){
 	else {
 		// We could not acquire the semaphore, which is an unexpected error
 		Serial.printf("Core %d: >>> Failed to aquire semaphore for DHT22 update\n", xPortGetCoreID());
-		_semaphoreTakeFailure = false;
+		_inputRegs[inputRegStatus] |= statusErrSemaphore;	// Semaphore Error
 	}	
 };
 
 // Receive updates for input registers from sensor task
+void WeatherClass::sensorBME280ErrorCallback(){
+	_inputRegs[inputRegStatus] |= statusErrBME280;	// Sensor Error
+}
+
 void WeatherClass::sensorBME280UpdateCallback(uint16_t *regArray){
 	
 	Serial.printf("Core %d: BME280 Sensor update received\n", xPortGetCoreID());
@@ -181,7 +185,7 @@ void WeatherClass::sensorBME280UpdateCallback(uint16_t *regArray){
 	else {
 		// We could not acquire the semaphore, which is an unexpected error
 		Serial.printf("Core %d: >>> Failed to aquire semaphore for BME280 update\n", xPortGetCoreID());
-		_semaphoreTakeFailure = false;
+		_inputRegs[inputRegStatus] |= statusErrSemaphore;	// Semaphore Error
 	}	
 };
 

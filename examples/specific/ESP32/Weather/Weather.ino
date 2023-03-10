@@ -33,7 +33,7 @@
 // Required for DHT22
 #include <DHT22.h>			// https://github.com/dvarrel/DHT22
 							// using ==> https://github.com/tinkering4fun/DHT22-ESP32-fork
-#define DHT22_SDA_PIN 19	// SDA pin for DHT22 sensor
+#define DHT22_SDA_PIN 23	// SDA pin for DHT22 sensor
 
 // Required for BME280
 #include "BlueDot_BME280.h"	// https://github.com/BlueDot-Arduino/BlueDot_BME280
@@ -160,11 +160,18 @@ void SensorDHT22( void * parameter)
 	uint16_t inputRegs[WeatherClass::numInputRegs];
 	
 	// Startup  DHT22 ... until begin() returns OK
-	while(dht22.begin() < 0)
+	int i = 30;
+	while(dht22.begin() < 0 && i > 0){
 		vTaskDelay( 100 / portTICK_PERIOD_MS);
-
+		i--;
+	}
+	if(i <= 0){
+		Serial.printf("Core %d: DHT22 ERROR: Sensor not found, task halted\n", xPortGetCoreID());
+		slave->sensorDHT22ErrorCallback();
+		while(true)
+			vTaskDelay( 100 / portTICK_PERIOD_MS);
+	}
 	// DHT22 conversion is already running after begin()
-	
 	Serial.println("DTH22 sensor initialized");
 	
 	// Endless loop ...
@@ -239,6 +246,7 @@ void SensorBME280( void * parameter)
 	if (bme280.init() != 0x60){  
 		 
 		Serial.printf("Core %d: BME280 ERROR: Sensor not found, task halted\n", xPortGetCoreID());
+		slave->sensorBME280ErrorCallback();
 		while(true)
 			vTaskDelay( 100 / portTICK_PERIOD_MS);
 	}
