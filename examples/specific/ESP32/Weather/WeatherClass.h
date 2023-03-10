@@ -14,8 +14,11 @@ public:
 	// Modbus Input Registers for sensor data
 	// -----------------------------------------------------------------
 	enum {
+		// Status
+		inputRegStatus = 0,
+		
 		// DHT22
-		inputRegDHT22Temp = 0,
+		inputRegDHT22Temp,
 		inputRegDHT22Hygro,
 		
 		// BME280
@@ -24,6 +27,13 @@ public:
 		inputRegBME280Press,
 		
 		numInputRegs,
+	};
+	
+	// Status flags
+	enum {
+		statusErrDHT22 		= 0x01,
+		statusErrBME280 	= 0x02,
+		statusErrSemaphore 	= 0x80
 	};
 	
 	// Modbus Holding Registers for configuration
@@ -47,6 +57,8 @@ public:
 public:
 
 	WeatherClass(Stream *serialStream, unsigned int baud, int transmissionControlPin, uint8_t slaveId);
+	void sensorDHT22ErrorCallback(void);
+	void sensorBME280ErrorCallback(void);
 	void sensorDHT22UpdateCallback(uint16_t *regArray);
 	void sensorBME280UpdateCallback(uint16_t *regArray);
 	uint16_t *getHoldingRegs();
@@ -69,7 +81,7 @@ private:
 	uint8_t cbAccessInputRegisters(bool write, uint16_t address, uint16_t length) override;
 	
 	SemaphoreHandle_t _registerSemaphore;
-	bool _semaphoreTakeFailure;
+//	bool _semaphoreTakeFailure;
 };
 
 
